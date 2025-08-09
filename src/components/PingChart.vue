@@ -1,50 +1,75 @@
 <template>
     <div>
+        
         <div class="period-options">
-            <button type="button" class="btn btn-light dropdown-toggle btn-period-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+            <button
+                type="button"
+                class="btn btn-light dropdown-toggle btn-period-toggle"
+                data-bs-toggle="dropdown"
+                aria-expanded="false"
+            >
+                <!-- Shows current selected period -->
                 {{ chartPeriodOptions[chartPeriodHrs] }}&nbsp;
             </button>
             <ul class="dropdown-menu dropdown-menu-end">
+                <!-- List all period options -->
                 <li v-for="(item, key) in chartPeriodOptions" :key="key">
-                    <a class="dropdown-item" :class="{ active: chartPeriodHrs == key }" href="#" @click="chartPeriodHrs = key">{{ item }}</a>
+                    <!-- Highlight selected, change period on click -->
+                    <a
+                        class="dropdown-item"
+                        :class="{ active: chartPeriodHrs == key }"
+                        href="#"
+                        @click="chartPeriodHrs = key"
+                        >{{ item }}</a
+                    >
                 </li>
             </ul>
         </div>
-        <div class="chart-wrapper" :class="{ loading : loading}">
+        <!-- Chart area, blurred when loading -->
+        <div class="chart-wrapper" :class="{ loading: loading }">
+            <!-- Chart.js line chart -->
             <Line :data="chartData" :options="chartOptions" />
         </div>
     </div>
 </template>
 
 <script lang="js">
+// Import Chart.js modules for drawing charts
 import { BarController, BarElement, Chart, Filler, LinearScale, LineController, LineElement, PointElement, TimeScale, Tooltip } from "chart.js";
+// Adapter for time axis
 import "chartjs-adapter-dayjs-4";
+// Import dayjs for date/time handling
 import dayjs from "dayjs";
+// Import vue-chartjs Line component
 import { Line } from "vue-chartjs";
+// Toast notifications
 import { useToast } from "vue-toastification";
+// Status constants and logger
 import { DOWN, PENDING, MAINTENANCE, log } from "../util.ts";
 
+// Create toast instance
 const toast = useToast();
 
+// Register Chart.js controllers and plugins
 Chart.register(LineController, BarController, LineElement, PointElement, TimeScale, BarElement, LinearScale, Tooltip, Filler);
 
 export default {
-    components: { Line },
+    components: { Line }, // Register Line chart component
     props: {
         /** ID of monitor */
         monitorId: {
             type: Number,
-            required: true,
+            required: true, // Must be provided
         },
     },
     data() {
         return {
+            loading: false, // True when fetching data
 
-            loading: false,
-
-            // Configurable filtering on top of the returned data
+            // Selected chart period (hours)
             chartPeriodHrs: 0,
 
+            // Options for chart period dropdown
             chartPeriodOptions: {
                 0: this.$t("recent"),
                 3: "3h",
@@ -53,17 +78,18 @@ export default {
                 168: "1w",
             },
 
-            // A heartbeatList for 3h, 6h, 24h, 1w
-            // Uses the $root.heartbeatList when value is null
+            // Heartbeat data for chart, null means use global list
             heartbeatList: null
         };
     },
     computed: {
+        // Chart.js options for rendering the chart
         chartOptions() {
             return {
-                responsive: true,
-                maintainAspectRatio: false,
+                responsive: true, // Chart resizes with window
+                maintainAspectRatio: false, // Don't keep aspect ratio
                 onResize: (chart) => {
+                    // Set chart height based on screen size
                     chart.canvas.parentNode.style.position = "relative";
                     if (screen.width < 576) {
                         chart.canvas.parentNode.style.height = "275px";
@@ -83,17 +109,16 @@ export default {
                         bottom: 10,
                     },
                 },
-
                 elements: {
                     point: {
-                        // Hide points on chart unless mouse-over
+                        // Hide points unless hovered
                         radius: 0,
                         hitRadius: 100,
                     },
                 },
                 scales: {
                     x: {
-                        type: "time",
+                        type: "time", // Time-based x-axis
                         time: {
                             minUnit: "minute",
                             round: "second",
@@ -145,54 +170,63 @@ export default {
                         bodyColor: this.$root.theme === "light" ? "rgba(12,12,18,1.0)" : "rgba(220,220,220,1.0)",
                         titleColor: this.$root.theme === "light" ? "rgba(12,12,18,1.0)" : "rgba(220,220,220,1.0)",
                         filter: function (tooltipItem) {
-                            return tooltipItem.datasetIndex === 0;  // Hide tooltip on Bar Chart
+                            // Only show tooltip for line chart
+                            return tooltipItem.datasetIndex === 0;
                         },
                         callbacks: {
                             label: (context) => {
+                                // Show ping in ms
                                 return ` ${new Intl.NumberFormat().format(context.parsed.y)} ms`;
                             },
                         }
                     },
                     legend: {
-                        display: false,
+                        display: false, // Hide legend
                     },
                 },
             };
         },
+        // Prepare chart data from heartbeatList
         chartData() {
-            let pingData = [];  // Ping Data for Line Chart, y-axis contains ping time
-            let downData = [];  // Down Data for Bar Chart, y-axis is 1 if target is down (red color), under maintenance (blue color) or pending (orange color), 0 if target is up
-            let colorData = []; // Color Data for Bar Chart
+            let pingData = [];  // Line chart data (ping times)
+            let downData = [];  // Bar chart data (status)
+            let colorData = []; // Bar chart colors
 
+            // Use local heartbeatList or global one
             let heartbeatList = this.heartbeatList ||
              (this.monitorId in this.$root.heartbeatList && this.$root.heartbeatList[this.monitorId]) ||
              [];
 
+            // Filter and map heartbeats for chart
             heartbeatList
                 .filter(
-                    // Filtering as data gets appended
-                    // not the most efficient, but works for now
+                    // Only keep heartbeats within selected period
                     (beat) => dayjs.utc(beat.time).tz(this.$root.timezone).isAfter(
                         dayjs().subtract(Math.max(this.chartPeriodHrs, 6), "hours")
                     )
                 )
                 .map((beat) => {
+                    // Format time for chart
                     const x = this.$root.datetime(beat.time);
+                    // Add ping value
                     pingData.push({
                         x,
                         y: beat.ping,
                     });
+                    // Add status value (down/maintenance/pending = 1, up = 0)
                     downData.push({
                         x,
                         y: (beat.status === DOWN || beat.status === MAINTENANCE || beat.status === PENDING) ? 1 : 0,
                     });
+                    // Set bar color based on status
                     colorData.push((beat.status === MAINTENANCE) ? "rgba(23,71,245,0.41)" : ((beat.status === PENDING) ? "rgba(245,182,23,0.41)" : "#DC354568"));
                 });
 
+            // Return datasets for Chart.js
             return {
                 datasets: [
                     {
-                        // Line Chart
+                        // Line chart (ping)
                         data: pingData,
                         fill: "origin",
                         tension: 0.2,
@@ -202,7 +236,7 @@ export default {
                         label: "ping",
                     },
                     {
-                        // Bar Chart
+                        // Bar chart (status)
                         type: "bar",
                         data: downData,
                         borderColor: "#00000000",
@@ -219,37 +253,33 @@ export default {
         },
     },
     watch: {
-        // Update chart data when the selected chart period changes
-        chartPeriodHrs: function (newPeriod) {
-
-            // eslint-disable-next-line eqeqeq
-            if (newPeriod == "0") {
-                this.heartbeatList = null;
-                this.$root.storage().removeItem(`chart-period-${this.monitorId}`);
-            } else {
-                this.loading = true;
-
-                this.$root.getMonitorBeats(this.monitorId, newPeriod, (res) => {
-                    if (!res.ok) {
-                        toast.error(res.msg);
-                    } else {
-                        this.heartbeatList = res.data;
-                        this.$root.storage()[`chart-period-${this.monitorId}`] = newPeriod;
-                    }
-                    this.loading = false;
-                });
-            }
-        }
+  chartPeriodHrs: {
+    handler(newPeriod) {
+      if (newPeriod == "0") {
+        this.heartbeatList = null;
+        this.$root.storage().removeItem("chart-period-global");
+      } else {
+        this.loading = true;
+        this.$root.getMonitorBeats(this.monitorId, newPeriod, (res) => {
+          if (!res.ok) {
+            toast.error(res.msg);
+          } else {
+            this.heartbeatList = res.data;
+            this.$root.storage()["chart-period-global"] = newPeriod;
+          }
+          this.loading = false;
+        });
+      }
     },
+  }
+},
+
     created() {
-        // Setup Watcher on the root heartbeatList,
-        // And mirror latest change to this.heartbeatList
+        // Watch for changes in global heartbeatList for this monitor
         this.$watch(() => this.$root.heartbeatList[this.monitorId],
             (heartbeatList) => {
-
                 log.debug("ping_chart", `this.chartPeriodHrs type ${typeof this.chartPeriodHrs}, value: ${this.chartPeriodHrs}`);
-
-                // eslint-disable-next-line eqeqeq
+                // If not "recent", append new heartbeat to local list
                 if (this.chartPeriodHrs != "0") {
                     const newBeat = heartbeatList.at(-1);
                     if (newBeat && dayjs.utc(newBeat.time) > dayjs.utc(this.heartbeatList.at(-1)?.time)) {
@@ -260,11 +290,9 @@ export default {
             { deep: true }
         );
 
-        // Load chart period from storage if saved
-        let period = this.$root.storage()[`chart-period-${this.monitorId}`];
-        if (period != null) {
-            this.chartPeriodHrs = Math.min(period, 6);
-        }
+        // On component creation, load chart period from storage if available
+        let period = this.$root.storage()["chart-period-global"];
+        this.chartPeriodHrs = period != null ? period : "0";
     }
 };
 </script>
@@ -272,11 +300,13 @@ export default {
 <style lang="scss" scoped>
 @import "../assets/vars.scss";
 
+// Style for select dropdown
 .form-select {
     width: unset;
     display: inline-flex;
 }
 
+// Style for period dropdown
 .period-options {
     padding: 0.1em 1em;
     margin-bottom: -1.2em;
@@ -331,11 +361,12 @@ export default {
     }
 }
 
+// Chart area style
 .chart-wrapper {
     margin-bottom: 0.5em;
 
     &.loading {
-        filter: blur(10px);
+        filter: blur(10px); // Blur chart when loading
     }
 }
 </style>
